@@ -279,8 +279,8 @@ class Replica:
             and args['last_log_term'] >= (last_log['term'] if last_log else 0) \
             and args['last_log_idx'] >= len(self.log):
             vote_granted = True
-        else:
-            raise ValueError('Could not determine if vote should be granted')
+        # else:
+        #     raise ValueError('Could not determine if vote should be granted')
 
         
         if vote_granted:
@@ -329,6 +329,9 @@ class Replica:
             return None
         
         self._randomize_timeout()
+
+        if not isinstance(args, dict):
+            print(f'args: {args}')
 
         prev_log_idx = args['prev_log_idx']
         prev_log_term = args['prev_log_term']
@@ -386,14 +389,35 @@ class Replica:
         else:
             # If AppendEntries fails because of log inconsistency:
             # decrement nextIndex and retry
-            self.next_idx[remote] -= 1
+            self.next_idx[remote] = max(0, self.next_idx[remote] - 1)
+            
+            # print('------')
+            # print(self.next_idx)
+            # print(len(self.log))
+            
+            prev_log_idx = self.next_idx[remote]
+            
+            if prev_log_idx <= len(self.log):
+                return None
+            
+            prev_log = self.log[prev_log_idx]
+            
+            data = AppendEntriesArgs(
+                term=self.current_term,
+                leader_id=self.id,
+                prev_log_idx=prev_log_idx,
+                prev_log_term=prev_log['term'] if prev_log else 0,
+                entries=self.log[prev_log_idx:],
+                leader_commit_idx=self.commit_idx
+            )
+            
             self._send({
                 'src': self.id,
                 'dst': remote,
                 'MID': self._generate_mid(),
                 'leader': self.id,
                 'type': MessageType.APPEND_ENTRIES,
-                'value': self.log[self.next_idx[remote]:]
+                'value': data # self.log[self.next_idx[remote]:]
             })
             return None
 
@@ -430,7 +454,7 @@ class Replica:
         '''
         Receive a put request
         '''
-        if self.mode != ReplicaMode.LEADER:
+        if self.mode == ReplicaMode.FOLLOWER:
             # send redirect to leader
             return MessageType.REDIRECT, {}
         
